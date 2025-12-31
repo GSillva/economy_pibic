@@ -1,51 +1,22 @@
-import webbrowser
-import urllib.parse
-import sys
-from selenium import webdriver
-from bs4 import BeautifulSoup
-import time
-from collections import Counter
-import urllib.parse
-import requests
-import pandas as pd
-from datetime import datetime, timedelta
-import re
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-import random
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import StaleElementReferenceException
-from selenium.common.exceptions import NoSuchElementException
-
-from selenium.webdriver.common.by import By
-import time
-import pandas as pd
-
-
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-import requests
-from bs4 import BeautifulSoup
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time, random, re
-
 import csv
-import time
 import random
 import re
+import time
 import urllib.parse
+from collections import defaultdict
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import os
 def carregar_todos_widgets(driver):   
 
 
@@ -54,7 +25,7 @@ def carregar_todos_widgets(driver):
 # Get scroll height
     last_height = driver.execute_script("return document.body.scrollHeight")
     count = 0
-    while count<5:
+    while count<3:
         # Scroll down to bottom
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
 
@@ -73,7 +44,7 @@ def carregar_todos_widgets(driver):
     return items
 
 
-def abrir_busca_g1(termo_formatado, data):
+def abrir_busca_g1( termo_formatado, data):
     
     
     termo_codificado = urllib.parse.quote_plus(termo_formatado)
@@ -89,11 +60,11 @@ def abrir_busca_g1(termo_formatado, data):
     #"https://g1.globo.com/busca/?q={}&species=noticias&from={}T03%3A00%3A00.000Z&to=2025-01-01T02%3A59%3A59.999Z"
 
     url_final = URL_BASE.format(termo_codificado, data, data_mais_um_str)
-    
     options = Options()
-    options.add_argument("--incognito")  # modo anônimo
+    options.add_argument("--incognito")
 
     driver = webdriver.Chrome(options=options)
+    
     driver.get(url_final)
     wait = WebDriverWait(driver, 30)
     '''first_result = wait.until(
@@ -106,9 +77,10 @@ def abrir_busca_g1(termo_formatado, data):
     for i in range(len(items)):
         a = items[i].find_element(By.CSS_SELECTOR, "a")
         links.append(a.get_attribute("href"))
-    driver.quit()
-    return links
     
+    driver.quit()
+
+    return links
     
 
 
@@ -119,7 +91,7 @@ def processar_noticia(url):
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     try:
-        label=1
+        label=0
         time.sleep(random.uniform(1, 2))  # não bombar servidor
         r = requests.get(url, timeout=10, headers=headers)
         r.raise_for_status()
@@ -178,10 +150,10 @@ def processar_noticia(url):
     
 def salvar_csv(termo, data, resultados):
     nome_arquivo = f"g1c-{termo}-{data}.csv"
-
-    with open(nome_arquivo, "w", newline="", encoding="utf-8") as f:
+    caminho_arquivo = os.path.join("csvs", nome_arquivo)
+    with open(caminho_arquivo, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["url", "titulo", "subtitulo", "data", "conteudo"])
+        writer.writerow(["url", "titulo", "subtitulo", "data", "conteudo", "label"])
 
         for r in resultados:
             if "erro" in r:
@@ -195,7 +167,7 @@ def salvar_csv(termo, data, resultados):
                 r["label"]
             ])
 
-    print(f"📁 CSV salvo: {nome_arquivo}")
+    print(f"📁 CSV salvo: {caminho_arquivo}")
 
 def read_datas(path_csv):
     df_pos = pd.read_csv(
@@ -217,23 +189,27 @@ def read_datas(path_csv):
     
     return lista_datas
 
-
+'''
 if __name__ == "__main__":
     termos = ["AXIA", "hidreletrica", "energia solar", "eolica", "comercio exterior", "presidente", "eletrica",]
     datas = read_datas('dados_treino_pos.csv')
     #datas = read_datas('dados_treino_neg.csv')
+    options = Options()
+    options.add_argument("--incognito")  # modo anônimo
+
+    driver = webdriver.Chrome(options=options)
     for data in datas:
         for termo in termos:
             print(f"\n🔎 Buscando notícias sobre: {termo} durante {data}")
            # time.sleep(10)
-            links = abrir_busca_g1(termo, data)
+            links = abrir_busca_g1(driver, termo, data)
             if (len(links)<1):
                 continue
             print(f"➡ {len(links)} links encontrados.")
 
             resultados = []
 
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {executor.submit(processar_noticia, link): link for link in links}
 
                 for future in as_completed(futures):
@@ -242,6 +218,51 @@ if __name__ == "__main__":
                     print("✔ Processado:", r.get("url", "??"))
 
             salvar_csv(termo, data, resultados)
+    driver.quit()'''
+
+def tarefa_busca_termo_data(termo, data):
+    print(f"\n🔎 Buscando notícias sobre: {termo} durante {data}")
+
+    links = abrir_busca_g1( termo, data)
+    
+
+    if not links:
+        print(f"⚠ Nenhum link para {termo} em {data}")
+        return
+
+    print(f"➡ {len(links)} links encontrados.")
+
+    resultados = []
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(processar_noticia, link): link for link in links}
+
+        for future in as_completed(futures):
+            r = future.result()
+            resultados.append(r)
+            print("✔ Processado:", r.get("url", "??"))
+
+    salvar_csv(termo, data, resultados)
+
+if __name__ == "__main__":
+    termos = [
+        "AXIA", "hidreletrica", "energia solar",
+        "eolica", "comercio exterior", "presidente", "eletrica"
+    ]
+
+    datas = read_datas('dados_treino_neg.csv')
+
+    for data in datas:
+        print(f"\n📅 Processando DATA: {data}")
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(tarefa_busca_termo_data, termo, data)
+                for termo in termos
+            ]
+
+            for future in as_completed(futures):
+                future.result()  # força exceções aparecerem
 
     print("\n🏁 Finalizado!")
 
