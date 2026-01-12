@@ -91,8 +91,8 @@ def processar_noticia(url):
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     try:
-        label=0
-        time.sleep(random.uniform(1, 2))  # não bombar servidor
+        
+        #time.sleep(random.uniform(1, 2))  # não bombar servidor
         r = requests.get(url, timeout=10, headers=headers)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
@@ -141,7 +141,7 @@ def processar_noticia(url):
             "subtitulo": subtitle,
             "data": data_found,
             "conteudo": paragraphs,
-            "label": label
+            "label": 1
         }
 
     except Exception as e:
@@ -150,7 +150,7 @@ def processar_noticia(url):
     
 def salvar_csv(termo, data, resultados):
     nome_arquivo = f"g1c-{termo}-{data}.csv"
-    caminho_arquivo = os.path.join("csvs", nome_arquivo)
+    caminho_arquivo = os.path.join("csvspos", nome_arquivo)
     with open(caminho_arquivo, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["url", "titulo", "subtitulo", "data", "conteudo", "label"])
@@ -189,80 +189,88 @@ def read_datas(path_csv):
     
     return lista_datas
 
-'''
-if __name__ == "__main__":
-    termos = ["AXIA", "hidreletrica", "energia solar", "eolica", "comercio exterior", "presidente", "eletrica",]
-    datas = read_datas('dados_treino_pos.csv')
-    #datas = read_datas('dados_treino_neg.csv')
-    options = Options()
-    options.add_argument("--incognito")  # modo anônimo
+def abrir_busca_g1_requests(termo_formatado, data, max_pages=10):
+    termo_codificado = urllib.parse.quote_plus(termo_formatado)
+    data_dt = datetime.strptime(data, "%Y-%m-%d").date()
+    data_mais_um = data_dt + timedelta(days=1)
 
-    driver = webdriver.Chrome(options=options)
-    for data in datas:
-        for termo in termos:
-            print(f"\n🔎 Buscando notícias sobre: {termo} durante {data}")
-           # time.sleep(10)
-            links = abrir_busca_g1(driver, termo, data)
-            if (len(links)<1):
-                continue
-            print(f"➡ {len(links)} links encontrados.")
+    data_inicio = f"{data}T03%3A00%3A00.000Z"
+    data_fim = f"{data_mais_um.strftime('%Y-%m-%d')}T02%3A59%3A59.999Z"
 
-            resultados = []
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                futures = {executor.submit(processar_noticia, link): link for link in links}
+    links = set()
 
-                for future in as_completed(futures):
-                    r = future.result()
-                    resultados.append(r)
-                    print("✔ Processado:", r.get("url", "??"))
+    for page in range(1, max_pages + 1):
+        url = (
+            "https://g1.globo.com/busca/"
+            f"?q={termo_codificado}"
+            f"&from={data_inicio}"
+            f"&to={data_fim}"
+            f"&page={page}"
+        )
 
-            salvar_csv(termo, data, resultados)
-    driver.quit()'''
+        r = requests.get(url, headers=headers, timeout=2)
+        if r.status_code != 200:
+            break
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        itens = soup.select("li.widget a")
+
+        if not itens:
+            break
+
+        for a in itens:
+            href = a.get("href")
+            if href:
+                links.add(href)
+
+        time.sleep(random.uniform(0.5, 1.2))
+
+    return list(links)
+
 
 def tarefa_busca_termo_data(termo, data):
     print(f"\n🔎 Buscando notícias sobre: {termo} durante {data}")
 
     links = abrir_busca_g1( termo, data)
-    
+    #abrir_busca_g1
 
     if not links:
         print(f"⚠ Nenhum link para {termo} em {data}")
         return
 
-    print(f"➡ {len(links)} links encontrados.")
+    #print(f"➡ {len(links)} links encontrados.")
 
     resultados = []
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(processar_noticia, link): link for link in links}
-
-        for future in as_completed(futures):
-            r = future.result()
-            resultados.append(r)
-            print("✔ Processado:", r.get("url", "??"))
+    for link in links:
+        r = processar_noticia(link)
+        resultados.append(r)
+        print("✔ Processado:", r.get("url", "??"))
 
     salvar_csv(termo, data, resultados)
 
 if __name__ == "__main__":
     termos = [
-        "AXIA", "hidreletrica", "energia solar",
+        "AXIA energia", "hidreletrica", "energia solar",
         "eolica", "comercio exterior", "presidente", "eletrica"
     ]
 
-    datas = read_datas('dados_treino_neg.csv')
+    datas = read_datas('dados_treino_pos.csv')
 
-    for data in datas:
-        print(f"\n📅 Processando DATA: {data}")
+    print(f"🚀 Processando {len(datas)} datas em paralelo")
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [
-                executor.submit(tarefa_busca_termo_data, termo, data)
-                for termo in termos
-            ]
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [
+            executor.submit(tarefa_busca_termo_data, termo, data)
+            for data in datas
+            for termo in termos
+        ]
 
-            for future in as_completed(futures):
-                future.result()  # força exceções aparecerem
+        for future in as_completed(futures):
+            future.result()  # força exceções aparecerem
 
     print("\n🏁 Finalizado!")
-
