@@ -19,20 +19,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 import os
 def carregar_todos_widgets(driver):   
 
-
     SCROLL_PAUSE_TIME = 3
-
-# Get scroll height
+    
     last_height = driver.execute_script("return document.body.scrollHeight")
     count = 0
     while count<3:
-        # Scroll down to bottom
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
 
-        # Wait to load page
         time.sleep(SCROLL_PAUSE_TIME)
 
-        # Calculate new scroll height and compare with last scroll height
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
             break
@@ -50,10 +45,8 @@ def abrir_busca_g1( termo_formatado, data):
     termo_codificado = urllib.parse.quote_plus(termo_formatado)
     data_dt = datetime.strptime(data, "%Y-%m-%d").date()
 
-    # soma 1 dia
     data_mais_um = data_dt + timedelta(days=1)
 
-    # volta para string no mesmo formato
     data_mais_um_str = data_mais_um.strftime("%Y-%m-%d")
     
     URL_BASE = "https://g1.globo.com/busca/?q={}&from={}T03%3A00%3A00.000Z&to={}T02%3A59%3A59.999Z"
@@ -71,7 +64,7 @@ def abrir_busca_g1( termo_formatado, data):
     EC.presence_of_element_located((By.CSS_SELECTOR, "li.widget"))
     )'''
 
-    items = carregar_todos_widgets(driver) #items = driver.find_elements(By.CSS_SELECTOR, "li.widget")#carregar_todos_widgets(driver)
+    items = carregar_todos_widgets(driver) 
     links = []
     total = len(items)
     for i in range(len(items)):
@@ -92,7 +85,6 @@ def processar_noticia(url):
     }
     try:
         
-        #time.sleep(random.uniform(1, 2))  # não bombar servidor
         r = requests.get(url, timeout=10, headers=headers)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
