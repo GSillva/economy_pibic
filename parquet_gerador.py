@@ -1,12 +1,19 @@
+# =========================
+# PIPELINE FINAL – FINBERT-PT
+# COM ACOMPANHAMENTO NO TERMINAL
+# =========================
+
 import pandas as pd
-import spacy
 import re
+import numpy as np
+from sentence_transformers import SentenceTransformer
 import ast
 
-nlp = spacy.load("pt_core_news_lg")
-
+# -------------------------
+# Leitura do dataset
+# -------------------------
 df = pd.read_csv(
-    "csv_concatenado.csv",
+    "csv_concatenado_shel.csv",
     sep=",",
     engine="python",
     quotechar='"',
@@ -14,18 +21,17 @@ df = pd.read_csv(
     on_bad_lines="skip"
 )
 
-df = df[df["conteudo"] != 0].reset_index(drop=True)
-
-
+df = df[df["conteudo"].notna()].reset_index(drop=True)
 df = df[~df["url"].str.contains("especial-publicitario", na=False)].copy()
-
 df["id_doc"] = df.index
 
-def processar_conteudo(conteudo):
+def limpar_conteudo(conteudo):
     if pd.isna(conteudo):
         return []
 
     conteudo = str(conteudo)
+
+    # Corrige barras invertidas inválidas (\A, \R, \ )
     conteudo = re.sub(r'\\(?!["\\\/bfnrtu])', r'\\\\', conteudo)
 
     try:
@@ -36,60 +42,121 @@ def processar_conteudo(conteudo):
     if not isinstance(lista, list) or len(lista) <= 2:
         return []
 
+    # --- remover as 2 primeiras strings ---
     lista = [str(x) for x in lista[2:]]
+
+    # --- unir conteúdo ---
     texto = " ".join(lista)
 
+    # --- remover trecho "Foto:" ---
     texto = re.sub(r"foto:.*?(?=\.)", "", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\b\d{2}/\d{2}/\d{4}\b", "", texto)
+
+    # --- lowercase ---
     texto = texto.lower()
+
+    # --- remover tudo a partir de "veja também / veja tambem" ---
     texto = re.sub(r"\bpara\s+se\s+inscrever\b.*", "", texto)
     texto = re.sub(r"\bveja\s+tamb[eé]m\b.*", "", texto)
+    texto = re.sub(r"\bvídeos\b.*", "", texto)
+    texto = re.sub(r"\be-mail\b.*", "", texto)
 
-    doc = nlp(texto)
+    # --- normalizar espaços ---
+    texto = re.sub(r"\s+", " ", texto).strip()
+
+    # --- dividir em frases ---
+    frases = [f.strip() for f in texto.split(" ") if f.strip()]
+
+    return texto
+
+# --- aplicar ---
+df.loc[:, "conteudo"] = df["conteudo"].apply(limpar_conteudo)
+print(f"Total de notícias carregadas: {len(df)}")
+
+# -------------------------
+# Limpeza mínima (BERT-friendly)
+# -------------------------
+def limpar_texto_bert(texto):
+    texto = str(texto)
+
+    texto = re.sub(r"foto:.*?(?=\.)", "", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\bveja\s+tamb[eé]m\b.*", "", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\bsaiba\s+mais\b.*", "", texto, flags=re.IGNORECASE)
+
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
+
+# -------------------------
+# Chunking para BERT
+# -------------------------
+def quebrar_em_chunks(texto, max_tokens=300):
+    palavras = texto.split()
+    chunks = []
+
+    for i in range(0, len(palavras), max_tokens):
+        chunk = " ".join(palavras[i:i + max_tokens])
+        if len(chunk) > 50:
+            chunks.append(chunk)
+
+    return chunks
+
+# -------------------------
+# Processamento do conteúdo
+# -------------------------
+def processar_conteudo(conteudo):
+    texto = limpar_texto_bert(conteudo)
+    return quebrar_em_chunks(texto)
+
+df["paragrafos"] = df["conteudo"].apply(processar_conteudo)
+df = df[df["paragrafos"].map(len) > 0].reset_index(drop=True)
+
+print(f"Notícias após processamento: {len(df)}")
+
+# -------------------------
+# Modelo FinBERT-PT
+# -------------------------
+modelo = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")#SentenceTransformer("lucas-leme/FinBERT-PT-BR")
+
+# -------------------------
+# Embedding por notícia
+# (com print de progresso)
+# -------------------------
+def embedding_por_noticia(paragrafos, idx, total):
+    embeddings = modelo.encode(
+        paragrafos,
+        batch_size=512,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+
+    print(f"[{idx+1}/{total}] notícia processada ({len(paragrafos)} chunks)")
+
+    return np.mean(embeddings, axis=0)
+
+# -------------------------
+# Gerar embeddings finais
+# -------------------------
+total = len(df)
+
+df["embedding"] = [
+    embedding_por_noticia(paragrafos, i, total)
+    for i, paragrafos in enumerate(df["paragrafos"])
+]
+
+# -------------------------
+# Salvar dataset final
+# -------------------------
+df[[
+    "id_doc",
+    "label",
+    "url",
+    "conteudo",
+    "termo",
     
-    palavras_limpas = [
-        token.lemma_             
-        for token in doc 
-        if not token.is_stop      
-        and not token.is_punct    
-    ]
-
-    return palavras_limpas
-
-df["conteudo"] = df["conteudo"].apply(processar_conteudo)
-
-df_frases = (
-    df[["id_doc", "url", "titulo", "label", "conteudo"]]
-    .explode("conteudo")
-    .rename(columns={"conteudo": "frase"})
-    .dropna()
-    .reset_index(drop=True)
-)
-
-df_frases = df_frases[df_frases["frase"].str.len() > 3].reset_index(drop=True)
-
-
-from sentence_transformers import SentenceTransformer
-import numpy as np
-
-modelo = SentenceTransformer(
-    "lucas-leme/FinBERT-PT-BR"
-    #"sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-
-frases = df_frases["frase"].tolist()
-
-embeddings = modelo.encode(
-    frases,
-    batch_size=512,
-    normalize_embeddings=True,
-    show_progress_bar=True
-)
-
-df_frases["embedding"] = list(embeddings)
-
-
-df_frases.to_parquet(
-    "dataset_frases_embeddings_lucas.parquet",
+    "embedding"
+]].to_parquet(
+    "dataset_shell_embeddings_finbert.parquet",
     index=False
 )
+
+print("Processamento concluído com sucesso.")
